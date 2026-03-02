@@ -1,0 +1,81 @@
+# PIPELINE DEFINITION
+# Name: enterprise-gpu-pipeline
+# Description: A production-grade pipeline running on T4 GPUs
+# Inputs:
+#    bucket_name: str
+#    project_id: str
+components:
+  comp-train-model-gpu:
+    executorLabel: exec-train-model-gpu
+    inputDefinitions:
+      parameters:
+        bucket_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-train-model-gpu:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model_gpu
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model_gpu(project_id: str, bucket_name: str):\n    import\
+          \ subprocess\n    # Note: Ensure src/train.py handles these arguments\n\
+          \    subprocess.run([\"python3\", \"src/train.py\", f\"--project={project_id}\"\
+          , f\"--bucket={bucket_name}\"])\n\n"
+        image: us-central1-docker.pkg.dev/mlops-ent-system/mlops-repo/gpu-trainer:v1
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: NVIDIA_TESLA_T4
+            type: NVIDIA_TESLA_T4
+pipelineInfo:
+  description: A production-grade pipeline running on T4 GPUs
+  name: enterprise-gpu-pipeline
+root:
+  dag:
+    tasks:
+      train-model-gpu:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model-gpu
+        inputs:
+          parameters:
+            bucket_name:
+              componentInputParameter: bucket_name
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: train-model-gpu
+  inputDefinitions:
+    parameters:
+      bucket_name:
+        parameterType: STRING
+      project_id:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2

@@ -1,0 +1,80 @@
+# PIPELINE DEFINITION
+# Name: enterprise-cpu-min-pipeline
+# Description: Minimal 1-CPU pipeline to bypass initial paid-tier quotas
+# Inputs:
+#    bucket_name: str
+#    project_id: str
+components:
+  comp-train-model-cpu:
+    executorLabel: exec-train-model-cpu
+    inputDefinitions:
+      parameters:
+        bucket_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-train-model-cpu:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model_cpu
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.15.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model_cpu(project_id: str, bucket_name: str):\n    import\
+          \ subprocess\n    # Note: Running on 1 CPU will be slow, but it will PROVE\
+          \ the pipeline works\n    subprocess.run([\"python3\", \"src/train.py\"\
+          , f\"--project={project_id}\", f\"--bucket={bucket_name}\"])\n\n"
+        image: us-central1-docker.pkg.dev/mlops-ent-system/mlops-repo/gpu-trainer:v1
+        resources:
+          cpuLimit: 1.0
+          memoryLimit: 4.0
+          resourceCpuLimit: '1.0'
+          resourceMemoryLimit: 4G
+pipelineInfo:
+  description: Minimal 1-CPU pipeline to bypass initial paid-tier quotas
+  name: enterprise-cpu-min-pipeline
+root:
+  dag:
+    tasks:
+      train-model-cpu:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model-cpu
+        inputs:
+          parameters:
+            bucket_name:
+              componentInputParameter: bucket_name
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: train-model-cpu
+  inputDefinitions:
+    parameters:
+      bucket_name:
+        parameterType: STRING
+      project_id:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.15.2
